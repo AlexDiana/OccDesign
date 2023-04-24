@@ -1,6 +1,7 @@
 library(ggplot2); library(here); library(tidyverse)
 library(foreach); library(doParallel)
 source(here("R","utility.R"))
+source(here("R","fun.R"))
 numCores <- detectCores()
 registerDoParallel(numCores)
 
