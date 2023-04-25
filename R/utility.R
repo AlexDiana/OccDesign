@@ -315,9 +315,9 @@ estimateUtilityData <- function(y, M, X_psi, X_p,
   Sigma <- solve(fit_optim$hessian)
   
   list(
-    "psi" = sum(diag(Sigma[1:ncov_psi,1:ncov_psi])),
-    "p" = sum(diag(Sigma[ncov_psi + 1:ncov_p,ncov_psi + 1:ncov_p])),
-    'Sigma' = Sigma)
+    "mu" = fit_optim$par[1:ncov_psi],
+    'Sigma' = Sigma[1:ncov_psi, 1:ncov_psi]
+  )
 }
 
 psiModel <- function(coeff_psi, X){
@@ -361,11 +361,12 @@ computeUtilityBase <- function(n, M, X,
     
     y <- simData(M, psi, p)
     
-    list_score <- estimateUtilityData(y, M, 
-                                      X_psi, X_p,
+    list_score <- estimateUtilityData(y, M, X_psi, X_p,
                                       trueParams)
+    mu_hat <- list_score$mu
+    Sigma_hat <- list_score$Sigma
     
-    list_score$psi
+    maxVar(mu_hat, beta_psi, Sigma_hat)
     
   }))
   
@@ -374,8 +375,8 @@ computeUtilityBase <- function(n, M, X,
 }
 
 computeUtilityBaseAnthitetic <- function(n, M, X, 
-                               gradient_list, coeffs,
-                               numSims){
+                                         gradient_list, coeffs,
+                                         numSims){
   
   coeff_psi <- coeffs[["psi"]]
   coeff_p <- coeffs[["p"]]
@@ -412,6 +413,13 @@ idxsubsetUN <- function(M, n, maxM){
   }))
 }
 
+estimateMSE <- function(mu_hat, mu0, Sigma){
+  (mu_hat - mu0) %*% (mu_hat - mu0) + sum(diag(Sigma))
+}
+
+maxVar <- function(mu_hat, mu0, Sigma){
+  max(diag(Sigma))
+}
 
 computeUtility <- function(n, M, X, maxM,
                            gradient_list, coeffs,
@@ -441,32 +449,36 @@ computeUtility <- function(n, M, X, maxM,
     
     list_score <- estimateUtilityData(y, M, X_psi, X_p,
                                       trueParams)
+    mu_hat <- list_score$mu
+    Sigma_hat <- list_score$Sigma
     
-    # list_score$Sigma
+    maxVar(mu_hat, beta_psi, Sigma_hat)
     
     # score
-    c("var_psi" = list_score$psi,
-      # "var_p" = list_score$p,
-      # "var_2" = det(list_score$Sigma)
-      "var_2" = sum(eigen(list_score$Sigma)$values)
-    )
+    # c("var_psi" = list_score$psi,
+    #   # "var_p" = list_score$p,
+    #   # "var_2" = det(list_score$Sigma)
+    #   "var_2" = sum(eigen(list_score$Sigma)$values)
+    # )
+    
+    # estimateMSE
     
   }))
   
   # cor(utility_values)
   
-  util_vals_psi <- utility_values[,1]
-  util_vals_p <- utility_values[,2]
-  
-  M_psi <- mean(util_vals_psi)
-  M_p <- mean(util_vals_p)
-  
-  C_psip <- cov(utility_values)[1,2]
-  var_p <- var(util_vals_p)
-  
-  beta_psip <- - C_psip / var_p
-  
-  y_star <- util_vals_psi + beta_psip * (util_vals_p - M_p)
+  # util_vals_psi <- utility_values[,1]
+  # util_vals_p <- utility_values[,2]
+  # 
+  # M_psi <- mean(util_vals_psi)
+  # M_p <- mean(util_vals_p)
+  # 
+  # C_psip <- cov(utility_values)[1,2]
+  # var_p <- var(util_vals_p)
+  # 
+  # beta_psip <- - C_psip / var_p
+  # 
+  # y_star <- util_vals_psi + beta_psip * (util_vals_p - M_p)
   
   # mean(y_star)
   
@@ -492,7 +504,8 @@ computeUtility <- function(n, M, X, maxM,
   #       fn = loglik(y_current, M_current),
   #       hessian = T)
   
-  mean(util_vals_psi)
+  mean(utility_values)
+  # mean(util_vals_psi)
   # - mean(y_star)
   
 }
@@ -771,7 +784,7 @@ mapThetaToProb <- function(theta){
   
 }
 
-grad_logfX <- function(x, gamma, n_occ){
+grad_logfX <- function(x, theta, n_occ){
   x - n_occ * exp(theta) / sum(exp(theta))
   # n <- length(gamma) + 1
   # x[-n] - n_occ * exp(theta) / (1 + sum(exp(theta)))

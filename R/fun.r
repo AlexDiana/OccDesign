@@ -176,7 +176,9 @@ plotDiagnostics <- function(pi_vals){
 
 plotObjective <- function(utility_vals){
   
-  qplot(seq_along(utility_vals),utility_vals, geom = "line") + 
+  ggplot(data = NULL, aes(x = seq_along(utility_vals),
+                          y = utility_vals)) + 
+    geom_line() + geom_point() + 
     theme_bw() + ylab("Objective function") + xlab("Iteration")
   
 }
