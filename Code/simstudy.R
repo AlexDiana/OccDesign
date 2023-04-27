@@ -10,7 +10,7 @@ registerDoParallel(numCores)
 N_x <- 500 # number of simulation replicates
 N_s <- 100 # utlity estimation replicates
 
-niter <- 50
+niter <- 100
 
 setwd(here("Output"))
 
@@ -19,10 +19,10 @@ setwd(here("Output"))
 # true params
 {
   beta_psi_true <- seq(0, 0, length.out = 4)
-  ppsi0_true <- .2
-  beta_p_true <- c(0)
+  p0_true <- 0.2
+  beta_p_true <- 0
   coeffs_true <- list("psi" = beta_psi_true,
-                      "p" = c(logit(beta_p0_true),beta_p_true))
+                      "p" = c(logit(p0_true),beta_p_true))
 }
 
 # create gradients
@@ -40,7 +40,7 @@ setwd(here("Output"))
                    gradPsi_max + .05)  #c(-1,.25, .5, .75,1)
   
   set.seed(3)
-  gradient1_p <- createLinearGradient()
+  gradient1_p <- createUniformGradient()
   plotgradient(gradient1_p)
   
   gradient_psi <- list(
@@ -85,7 +85,7 @@ diag1 <- plotDiagnostics(pi_vals)
 ggsave("diag_1.jpeg", diag1)
 obj1 <- plotObjective(utility_vals)
 ggsave("obj_1.jpeg", obj1)
-design1 <- plotDesign(pi_vals, n_occ, X, gradient1_psi)
+design1 <- plotDesign(pi_vals, n_occ, X1, gradient1_psi)
 ggsave("design_1.jpeg", design1)
 
 # scenario 2 (positive effect on occ) ----------
@@ -93,10 +93,10 @@ ggsave("design_1.jpeg", design1)
 # true params
 {
   beta_psi_true <- seq(-1, 1, length.out = 4)
-  beta_p0_true <- .5
+  p0_true <- .2
   beta_p_true <- c(0)
   coeffs_true <- list("psi" = beta_psi_true,
-                      "p" = c(logit(beta_p0_true),beta_p_true))
+                      "p" = c(logit(p0_true),beta_p_true))
 }
 
 # create gradients
@@ -168,10 +168,10 @@ ggsave("design_2.jpeg", design2)
 # true params
 {
   beta_psi_true <- seq(0, 0, length.out = 4)
-  beta_p0_true <- .2
+  p0_true <- .2
   beta_p_true <- c(3)
   coeffs_true <- list("psi" = beta_psi_true,
-                      "p" = c(logit(beta_p0_true),beta_p_true))
+                      "p" = c(logit(p0_true),beta_p_true))
 }
 
 # create gradients
@@ -243,10 +243,10 @@ ggsave("design_3.jpeg", design3)
 # true params
 {
   beta_psi_true <- seq(0, 0, length.out = 4)
-  beta_p0_true <- .5
+  p0_true <- .2
   beta_p_true <- c(0)
   coeffs_true <- list("psi" = beta_psi_true,
-                      "p" = c(logit(beta_p0_true),beta_p_true))
+                      "p" = c(logit(p0_true),beta_p_true))
 }
 
 # create gradients
@@ -318,10 +318,10 @@ ggsave("design_4.jpeg", design4)
 # true params
 {
   beta_psi_true <- seq(0, 0, length.out = 4)
-  beta_p0_true <- .5
+  p0_true <- .2
   beta_p_true <- c(-3)
   coeffs_true <- list("psi" = beta_psi_true,
-                      "p" = c(logit(beta_p0_true),beta_p_true))
+                      "p" = c(logit(p0_true),beta_p_true))
 }
 
 # create gradients
