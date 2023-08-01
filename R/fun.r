@@ -1,4 +1,4 @@
-findOptimalDesign <- function(niter, 
+findOptimalDesignOld <- function(niter, 
                               n, n_occ,
                               N_x, N_s,
                               coeffs_true,
@@ -157,7 +157,119 @@ findOptimalDesign <- function(niter,
        "pi_vals" = pi_vals)
 }
 
-
+findOptimalDesign <- function(designSettings,
+                              trueParamSettings,
+                              covariatesValues,
+                              algoParams){
+  
+  # import design parameters
+  {
+    n <- designSettings$n
+    n_occ <- designSettings$n_occ  
+  }
+  
+  # import covariates
+  {
+    X_psi <- covariatesValues$X_psi
+    X_psirange <- covariatesValues$X_psirange
+    X_p <- covariatesValues$X_p  
+  }
+  
+  # import algorithm parameters
+  {
+    eps <- algoParams$eps
+    N_x <- algoParams$N_x
+    N_s <- algoParams$N_s  
+  }
+  
+  # import true coefficients
+  coeffs_true <- trueParamSettings
+  
+  # create breaks
+  numBreaks <- 4
+  X_psibreaks <- c(min(X_psirange) - .05, 
+                   seq(min(X_psirange), 
+                       max(X_psirange), length.out = 5)[-c(1,numBreaks + 1)],
+                   max(X_psirange) + .05)  #c(-1,.25, .5, .75,1)
+  
+  X_psi <- createDM_Psi(X_psi, X_psibreaks)
+  
+  # starting values
+  {
+    # theta <- rep(0, n - 1)
+    theta <- seq(0, 0, length.out = n)
+    
+    alpha_k <- .5
+    
+    # generate auxiliary variables to perform simulation
+    {
+      # auxiliary variables to simulate number of samples per site
+      u1 <- matrix(runif(n_occ * N_x / 2), N_x / 2, n_occ)
+      u <- rbind(u1, 1 - u1)
+      
+      # auxiliary variables to simulate occupancies
+      U_n1 <- matrix(runif(N_s * n / 2), N_s / 2, n)
+      U_n <- rbind(U_n1, 1 - U_n1)
+      
+      # auxiliary variables to simulate detections
+      maxM <- (n_occ / n) * 5 # max M per site, this is used only to define dimensions
+      U_N1 <- matrix(runif(N_s * (maxM * n) / 2), N_s / 2, maxM * n)
+      U_N <- rbind(U_N1, 1 - U_N1)
+      
+    }
+  }
+  
+  iter <- 1
+  
+  repeat {
+    
+    print(paste0("Iter = ",iter))
+    print(paste0("Theta = ",
+                 paste0(round(mapThetaToProb(theta), 3), collapse = "-")))
+    
+    # sampling values ----------
+    
+    {
+      # simulate number of samples M 
+      pi <- mapGammaToPi(theta)
+      M_all <- rmultinom_u(pi, u, n)
+    }
+    
+    # compute utility function
+    H_i <- foreach(i = 1:N_x,
+                   .combine = c,
+                   .packages = c("OccDesign")) %dopar% {
+                     M <- M_all[,i]
+                     return( computeUtility(n, M, 
+                                            X_psi, X_p, maxM,
+                                            coeffs_true,
+                                            U_n, U_N, N_s))
+                   }
+    
+    
+    # compute the gradient
+   
+    gradient_estimate <- 
+      computeReducedVarianceGradient(H_i, 
+                                     M_all, 
+                                     n_occ, 
+                                     theta)
+      
+    
+    # update theta using the gradient
+    theta <- theta - alpha_k * gradient_estimate
+    
+    pi_new <- mapGammaToPi(theta)
+    
+    if(max((pi_new - pi) / pi) < eps){
+      break
+    }
+    
+    iter <- iter + 1
+  }
+  
+  n_occ * pi
+}
 
 plotDiagnostics <- function(pi_vals){
   

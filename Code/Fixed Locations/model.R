@@ -12,23 +12,25 @@ registerDoParallel(numCores)
   # sourceCpp("src/code.cpp")
 }
 
-# COMPUTE OPTIMAL DESIGN -------
+# SETTINGS ------
 
-# true params
-{
-  # ppsi0_true <- c(.5, .25)
-  # beta_psi_true <- c(1, -1)
-  # beta_p_true <- c(-1)
-  # 
-  # coeffs_true <- list("psi" = c(logit(ppsi0_true[1]),beta_psi_true),
-  #                     "p" = c(logit(ppsi0_true[2]),beta_p_true))
-  
-  beta_psi_true <- seq(0, 0, length.out = 4)
-  ppsi0_true <- .5
-  beta_p_true <- c(0)
-  coeffs_true <- list("psi" = beta_psi_true,
-                      "p" = c(logit(ppsi0_true),beta_p_true))
-}
+# design parameter
+
+designSettings <- list(
+  n = 25, # number of sites
+  n_occ = 50 # number of samples
+  )
+
+# true parameters (theta_0) 
+
+beta_psi_true <- seq(0, 0, length.out = 4)
+ppsi0_true <- .5
+beta_p_true <- c(0)
+
+trueParamSettings <- list(
+  list("psi" = beta_psi_true,
+       "p" = c(logit(ppsi0_true),beta_p_true))
+)
 
 # create gradients
 {
@@ -62,11 +64,7 @@ registerDoParallel(numCores)
                         "p" = gradient_p)
 }
 
-# number of locations
-n <- 25
 
-# total number of sampling occasions
-n_occ <- 50
 
 # generate sites locations
 # X <- expand.grid(seq(0, 1, length.out = sqrt(n)),
@@ -123,16 +121,16 @@ for (i in 1:niter) {
   x <- rmultinom_u(pi, u, n)
   # x <- generateSamples(pi, n_occ, N_x)
   
-  H_x <- sapply(1:N_x, function(i){
-    print(i)
-    M <- x[,i]
-    return(
-      computeUtility(n, M, X, 
-                     gradient_list, coeffs_true,
-                     X_psibreaks,
-                     U_n, U_N, N_s)
-    )
-  })
+  # H_x <- sapply(1:N_x, function(i){
+  #   print(i)
+  #   M <- x[,i]
+  #   return(
+  #     computeUtility(n, M, X, 
+  #                    gradient_list, coeffs_true,
+  #                    X_psibreaks,
+  #                    U_n, U_N, N_s)
+  #   )
+  # })
  
   # H_x <- foreach(i = 1:N_x,
   #                .combine = c,

@@ -1,11 +1,293 @@
 
+
+# logistic function
 logistic <- function(x){
   1 / (1 + exp(-x))
 }
 
+# logit function
 logit <- function(x){
   log(x / (1 - x))
 }
+
+# simulate a bernoulli random variable using a uniform random variable
+generateBernoulliEps <- function(U,  # uniform random variable
+                                 p # probability
+                                 ){
+  as.numeric(U < p)
+}
+
+# simulate occupancy datasets using uniform random variables
+simDataEps <- function(M,  # number of sample per sites
+                       psi, # occupancy probability
+                       p,  # detection probability
+                       U_n, U_N # auxiliary variables
+                       ){
+  
+  # simulate occupancies
+  z <- generateBernoulliEps(U_n, psi)
+  
+  p_all <- p * rep(z, M)
+  
+  # simulate detections
+  y <- generateBernoulliEps(U_N, p_all)
+  
+  y
+}
+
+rmultinom_singleu <- function(pi, u, n){
+  
+  vals <- as.numeric(cut(u, breaks = c(0,cumsum(pi))))
+  tablevals <- table(vals)  
+  samples <- rep(0, n)
+  samples[as.numeric(names(tablevals))] <- tablevals
+  
+  samples
+}
+
+# simulate from a multinomial distribution using precomputed uniform variables 
+rmultinom_u <- function(pi, # probability
+                        u,  # uniform random variables
+                        n # sample size
+                        ){
+  
+  samples <- apply(u, 1, function(x){
+    rmultinom_singleu(pi, x, n)
+  })
+  
+}
+
+
+estimateMSE <- function(mu_hat, mu0, Sigma){
+  (mu_hat - mu0) %*% (mu_hat - mu0) + sum(diag(Sigma))
+}
+
+# compute the maximum posterior covariance
+maxVar <- function(Sigma){
+  max(diag(as.matrix(Sigma)))
+}
+
+# wrapper around the c++ function to compute loglikelihood
+# of an occupancy model
+loglik_r <- function(y, M, X_psi, X_p){
+  
+  n <- length(M)
+  occ <- as.numeric(sapply(1:n, function(i){
+    any(y[1:M[i] + sum(M[seq_len(i-1)])] > 0)
+  }))
+  occ_all <- rep(occ, M)
+  y_notoccupied <- y[occ_all == 0]
+  y_occupied <- y[occ_all == 1]
+  sumocc <- sum(y_occupied)
+  sumMocc <- sum(M[occ == 1])
+  Mocc0 <- M[occ == 0]
+  
+  ncov_psi <- ncol(X_psi)
+  ncov_p <- ncol(X_p)
+  
+  cov_psi <- 1:ncov_psi - 1
+  cov_p <- ncov_psi + 1:ncov_p - 1
+  
+  sumM <- c(0,cumsum(M)[-n])
+  
+  loglik_data <- function(pars){
+    
+    # print(pars)
+    
+    loglik_cpp(pars, y, M, X_psi, X_p, cov_psi, cov_p, 
+               y_occupied, occ, occ_all, sumM)
+    
+  }
+  
+  loglik_data
+  
+}
+
+# wrapper around the c++ function to compute gradient of loglikelihood
+# of an occupancy model
+gr_loglik_r <- function(y, M, X_psi, X_p){
+  
+  n <- length(M)
+  occ <- as.numeric(sapply(1:n, function(i){
+    any(y[1:M[i] + sum(M[seq_len(i-1)])] > 0)
+  }))
+  occ_all <- rep(occ, M)
+  y_notoccupied <- y[occ_all == 0]
+  y_occupied <- y[occ_all == 1]
+  sumocc <- sum(y_occupied)
+  sumMocc <- sum(M[occ == 1])
+  Mocc0 <- M[occ == 0]
+  
+  ncov_psi <- ncol(X_psi)
+  ncov_p <- ncol(X_p)
+  
+  cov_psi <- 1:ncov_psi - 1
+  cov_p <- ncov_psi + 1:ncov_p - 1
+  
+  sumM <- c(0,cumsum(M)[-n])
+  
+  loglik_data <- function(pars){
+    
+    gr_loglik_cpp(pars, y, M, X_psi, X_p, cov_psi, cov_p,
+                  y_occupied, occ, occ_all, sumM)
+    
+  }
+  
+  loglik_data
+  
+}
+
+# find utility function for a given dataset by computing a Laplace approximation
+# to the posterior
+estimateUtilityData <- function(y,  # data
+                                M,  # number of sample per site
+                                X_psi, # occupancy covariates matrix
+                                X_p, # detection covariates matrix
+                                trueParams # true value of the parameters
+                                ){
+  
+  ncov_psi <- ncol(X_psi)
+  ncov_p <- ncol(X_p)
+  
+  startingParams <- rep(0, ncov_psi + ncov_p)
+  # startingParams <- trueParams
+  
+  # maximize the posterior and compute Hessian
+  fit_optim <- optim(
+    par = startingParams,
+    method = c("BFGS"),
+    fn = loglik_r(y, M, X_psi, X_p),
+    gr = gr_loglik_r(y, M, X_psi, X_p),
+    hessian = T
+  )
+  
+  # posterior covariance matrix
+  Sigma <- solve(fit_optim$hessian)
+  
+  list(
+    "mu" = fit_optim$par[1:ncov_psi],
+    'Sigma' = Sigma[1:ncov_psi, 1:ncov_psi]
+  )
+}
+
+# convert the parameters gamma to the vector of probabilities pi
+mapGammaToPi <- function(gamma){
+  
+  gamma <- exp(gamma)
+  
+  gamma / sum(gamma)
+  
+}
+
+# create the subset of detection auxiliary uniform variables used
+idxsubsetUN <- function(M, n, maxM){
+  unlist(sapply(1:n, function(i){
+    (i - 1) * maxM + seq_len(M[i])
+  }))
+}
+
+# create design matrix for detection
+createDM_P <- function(X){
+  cbind(1, X)
+}
+
+# compute the utility function 
+computeUtility <- function(n,  # number of sites
+                           M,  # number of samples per site
+                           X_psi, # occupancy covariates matrix
+                           X_p, # detection covariates matrix 
+                           maxM, # used for assigning maximum dimensions
+                           coeffs, # value of the true coefficients
+                           U_n, U_N # auxiliary variables to simulate datasets
+                           ){
+  
+  # import true parameters
+  beta_psi <- coeffs[["psi"]]
+  beta_p <- coeffs[["p"]]
+  
+  trueParams <- c(beta_psi, beta_p)
+  
+  # compute true occupancy and detection
+  X_p <- X_p[rep(1:n, M),]
+  X_p <- createDM_P(X_p)
+  
+  psi <- logistic(X_psi %*% beta_psi)
+  p <- logistic(X_p %*% beta_p)
+  
+  # subset the detection probability auxiliary variables
+  idxUn <- idxsubsetUN(M, n, maxM)
+  U_N_subset <- U_N[,idxUn]
+  
+  # number of simulations
+  N_s <- nrow(U_n)
+  
+  utility_values <- t(sapply(1:N_s, function(i){
+    
+    # simulate occupancy dateset
+    y <- simDataEps(M, psi, p, U_n[i,], U_N_subset[i,])
+    
+    # estimate utility
+    list_score <- estimateUtilityData(y, M, X_psi, X_p,
+                                      trueParams)
+    mu_hat <- list_score$mu
+    Sigma_hat <- list_score$Sigma
+    
+    maxVar(mu_hat, beta_psi, Sigma_hat)
+    
+  }))
+  
+  mean(utility_values)
+  
+}
+
+# compute gradient of log(f|M)
+grad_logfX <- function(x, theta, n_occ){
+  x - n_occ * exp(theta) / sum(exp(theta))
+}
+
+# compute the gradient using control variates as in formula (4) of the Appendix
+computeReducedVarianceGradient <- function(
+    H_x, # value of the utility function 
+    M_all, # value of the number of samples per site of each iteration
+    n_occ, # total number of samples
+    theta # current parameter value
+) {
+  
+  N_x <- length(H_x)
+  n <- nrow(M_all)
+  
+  # compute term (1) of formula (4)
+  term1 <- sapply(1:N_x, function(i){
+    M_current <- M_all[,i]
+    H_x[i] * grad_logfX(M_current, theta, n_occ)
+  })
+  
+  # compute term (2) of formula (4)
+  term2 <- sapply(1:N_x, function(i){
+    M_current <- M_all[,i]
+    grad_logfX(M_current, theta, n_occ)
+  })
+  
+  var_h <- apply(term2, 1, var)
+  cov_h <- sapply(1:n, function(i){
+    cov(term1[i,], term2[i,])
+  })
+  
+  a_i <- cov_h / var_h
+  
+  # compute the new gradient estimate using formula (4)
+  gradient_estimates <- sapply(1:N_x, function(i){
+    M_current <- M_all[,i]
+    H_x[i] * grad_logfX(M_current, theta, n_occ) -
+      grad_logfX(M_current, theta, n_occ) * a_i
+  })
+  
+  apply(gradient_estimates, 1, mean)
+}
+
+
+# --------
+
 
 computeM <- function(n, M_avg){
   M_min <- floor(M_avg)
@@ -24,22 +306,6 @@ simData <- function(M, psi, p){
   z <- rbinom(n, 1, psi)
   p_all <- p * rep(z, M)
   y <- rbinom(sum(M), 1, p_all)
-  
-  y
-}
-
-generateBernoulliEps <- function(U, p){
-  as.numeric(U < p)
-}
-
-simDataEps <- function(M, psi, p, U_n, U_N){
-  # n <- length(M)
-  
-  z <- generateBernoulliEps(U_n, psi)
-  # z <- rbinom(n, 1, psi)
-  p_all <- p * rep(z, M)
-  # y <- rbinom(sum(M), 1, p_all)
-  y <- generateBernoulliEps(U_N, p_all)
   
   y
 }
@@ -109,41 +375,8 @@ loglik <- function(y, M, X_psi, X_p){
   
 }
 
-loglik_cpp2 <- function(y, M, X_psi, X_p){
-  
-  n <- length(M)
-  occ <- as.numeric(sapply(1:n, function(i){
-    any(y[1:M[i] + sum(M[seq_len(i-1)])] > 0)
-  }))
-  occ_all <- rep(occ, M)
-  y_notoccupied <- y[occ_all == 0]
-  y_occupied <- y[occ_all == 1]
-  sumocc <- sum(y_occupied)
-  sumMocc <- sum(M[occ == 1])
-  Mocc0 <- M[occ == 0]
-  
-  ncov_psi <- ncol(X_psi)
-  ncov_p <- ncol(X_p)
-  
-  cov_psi <- 1:ncov_psi - 1
-  cov_p <- ncov_psi + 1:ncov_p - 1
-  
-  sumM <- c(0,cumsum(M)[-n])
-  
-  loglik_data <- function(pars){
-    
-    # print(pars)
-    
-    loglik_cpp(pars, y, M, X_psi, X_p, cov_psi, cov_p, 
-               y_occupied, occ, occ_all, sumM)
-    
-  }
-  
-  loglik_data
-  
-}
 
-gr_loglik <- function(y, M, X_psi, X_p){
+gr_loglik_0 <- function(y, M, X_psi, X_p){
   
   n <- length(M)
   occ <- as.numeric(sapply(1:n, function(i){
@@ -263,62 +496,10 @@ gr_loglik <- function(y, M, X_psi, X_p){
   
 }
 
-gr_loglik_cpp2 <- function(y, M, X_psi, X_p){
-  
-  n <- length(M)
-  occ <- as.numeric(sapply(1:n, function(i){
-    any(y[1:M[i] + sum(M[seq_len(i-1)])] > 0)
-  }))
-  occ_all <- rep(occ, M)
-  y_notoccupied <- y[occ_all == 0]
-  y_occupied <- y[occ_all == 1]
-  sumocc <- sum(y_occupied)
-  sumMocc <- sum(M[occ == 1])
-  Mocc0 <- M[occ == 0]
-  
-  ncov_psi <- ncol(X_psi)
-  ncov_p <- ncol(X_p)
-  
-  cov_psi <- 1:ncov_psi - 1
-  cov_p <- ncov_psi + 1:ncov_p - 1
-  
-  sumM <- c(0,cumsum(M)[-n])
-  
-  loglik_data <- function(pars){
-    
-    gr_loglik_cpp(pars, y, M, X_psi, X_p, cov_psi, cov_p,
-                  y_occupied, occ, occ_all, sumM)
-    
-  }
-  
-  loglik_data
-  
-}
 
-estimateUtilityData <- function(y, M, X_psi, X_p,
-                                trueParams){
-  
-  ncov_psi <- ncol(X_psi)
-  ncov_p <- ncol(X_p)
-  
-  startingParams <- rep(0, ncov_psi + ncov_p)
-  # startingParams <- trueParams
-  
-  fit_optim <- optim(
-    par = startingParams,
-    method = c("BFGS"),
-    fn = loglik_cpp2(y, M, X_psi, X_p),
-    gr = gr_loglik_cpp2(y, M, X_psi, X_p),
-    hessian = T
-  )
-  
-  Sigma <- solve(fit_optim$hessian)
-  
-  list(
-    "mu" = fit_optim$par[1:ncov_psi],
-    'Sigma' = Sigma[1:ncov_psi, 1:ncov_psi]
-  )
-}
+
+
+
 
 psiModel <- function(coeff_psi, X){
   logistic(X %*% coeff_psi)
@@ -366,7 +547,41 @@ computeUtilityBase <- function(n, M, X,
     mu_hat <- list_score$mu
     Sigma_hat <- list_score$Sigma
     
-    maxVar(mu_hat, beta_psi, Sigma_hat)
+    maxVar(Sigma_hat)
+    
+  }))
+  
+  mean(utility_values)
+  
+}
+
+computeUtilityBaseFinal <- function(n, M, 
+                                    X_psi, X_p, maxM,
+                                    coeffs,
+                                    X_psibreaks,
+                                    numSims){
+  
+  beta_psi <- coeffs[["psi"]]
+  beta_p <- coeffs[["p"]]
+  
+  X_p <- X_p[rep(1:n, M),]
+  X_p <- createDM_P(X_p)
+  
+  psi <- logistic(X_psi %*% beta_psi)
+  p <- logistic(X_p %*% beta_p)
+  
+  trueParams <- c(beta_psi, beta_p)
+  
+  utility_values <- t(sapply(1:numSims, function(i){
+    
+    y <- simData(M, psi, p)
+    
+    list_score <- estimateUtilityData(y, M, X_psi, X_p,
+                                      trueParams)
+    mu_hat <- list_score$mu
+    Sigma_hat <- list_score$Sigma
+    
+    maxVar(Sigma_hat)
     
   }))
   
@@ -407,28 +622,22 @@ computeUtilityBaseAnthitetic <- function(n, M, X,
 }
 
 
-idxsubsetUN <- function(M, n, maxM){
-  unlist(sapply(1:n, function(i){
-    (i - 1) * maxM + seq_len(M[i])
-  }))
+
+
+
+computeXmatrix <- function(X_psi, 
+                           M,
+                           X_p){
+  
 }
 
-estimateMSE <- function(mu_hat, mu0, Sigma){
-  (mu_hat - mu0) %*% (mu_hat - mu0) + sum(diag(Sigma))
-}
-
-maxVar <- function(mu_hat, mu0, Sigma){
-  max(diag(Sigma))
-}
-
-computeUtility <- function(n, M, X, maxM,
+computeUtility0 <- function(n, M, X, maxM,
                            gradient_list, coeffs,
                            X_psibreaks,
                            U_n, U_N, N_s){
   
   beta_psi <- coeffs[["psi"]]
   beta_p <- coeffs[["p"]]
-  # rho <- coeffs[["rho"]]
   
   X_psip <- computeXgradient(gradient_list, X, M, X_psibreaks)
   X_psi <- X_psip$X_psi
@@ -565,18 +774,6 @@ createLinearGradient <- function(){
   
 }
 
-plotgradient <- function(gradient0){
-  
-  x1 <- seq(0, 1, length.out = 100)
-  x2 <- seq(0, 1, length.out = 100)
-  loc <- expand.grid(x1, x2)
-  
-  colorfill <- apply(loc, 1, gradient0)
-  
-  ggplot() + 
-    geom_tile(aes(x = loc[,1], y = loc[,2], fill = colorfill))
-  
-}
 
 createDM_Psi <- function(X, breaks){ # c(-1,.25, .5, .75,1)
   # cbind(1, X, X^2)
@@ -596,9 +793,6 @@ createDM_Psi <- function(X, breaks){ # c(-1,.25, .5, .75,1)
 #   data = X_psim)
 # as.matrix(model.matrix(~. - 1, as.data.frame(as.matrix(X_psim))))
 
-createDM_P <- function(X){
-  cbind(1, X)
-}
 
 computeXgradient <- function(gradient_list, X, M, breaks){
   
@@ -644,180 +838,3 @@ proposeLocations <- function(n, M, X, sd_x){
        "M" = M,
        "X" = X)
 }
-
-generateNewUN <- function(M1){
-  
-  U1 <- runif(M1 / 2)
-  U2 <- 1 - U1
-  
-  c(U1, U2)
-}
-
-shiftSamplOcc <- function(n, M, X,
-                          U_n, U_N){
-  
-  sumM <- c(0, cumsum(M)[-n])
-  dists <- as.matrix(dist(X))
-  
-  i <- sample(1:n, 1)
-  
-  closestPoints <- which(abs(dists[i,-i] - min(dists[i,-i])) < 
-                           .Machine$double.eps ^ 0.5)
-  closestPoint <- sample(closestPoints, 1)
-  
-  # remove one
-  idxOldObs <- sumM[i] + M[i]
-  idxNewObs <- sumM[closestPoint] + (M[closestPoint] + 1)
-  U_N[,idxOldObs] <- NA
-  # insert row
-  U_N_first <- U_N[,seq_len(idxNewObs - 1)]
-  U_N_new <- matrix(generateNewUN(M1), M1, 1)
-  if(idxNewObs <= ncol(U_N)){
-    U_N_last <- U_N[,seq(from = idxNewObs, to = ncol(U_N))]
-    U_N <- cbind(U_N_first, 
-                 U_N_new, 
-                 U_N_last)
-  } else {
-    U_N <- cbind(U_N_first, 
-                 U_N_new)
-  }
-  
-  U_N <- U_N[,!is.na(U_N[1,])]
-  
-  M[i] <- M[i] - 1
-  M[closestPoint] <- M[closestPoint] + 1
-  
-  # resize
-  if(M[i] == 0){
-    M[i] <- M[n]
-    M <- M[-n]
-    X[i,] <- X[n,]
-    X <- X[-n,]
-    U_n[,i] <- U_n[,n]
-    U_n <- U_n[,-n]
-    n <- n - 1
-  }
-  
-  list("n" = n,
-       "M" = M,
-       "X" = X,
-       "U_n" = U_n,
-       "U_N" = U_N)
-}
-
-generateSamples <- function(theta, N, n){
-  
-  rmultinom(n, N, theta)
-  
-}
-
-generateSamplesAntithetic <- function(theta, N, n){
-  
-  rmultinom(n, N, theta)
-  
-}
-
-rmultinom_singleu <- function(pi, u, n){
-  
-  vals <- as.numeric(cut(u, breaks = c(0,cumsum(pi))))
-  tablevals <- table(vals)  
-  samples <- rep(0, n)
-  samples[as.numeric(names(tablevals))] <- tablevals
-  
-  samples
-}
-
-rmultinom_u <- function(pi, u, n){
-  
-  samples <- apply(u, 1, function(x){
-    rmultinom_singleu(pi, x, n)
-  })
-  
-}
-
-S_theta <- function(hx){
-  # (hx - hlb) / (1 + exp(- S0 * (hx - gammatheta)))
-  # exp(hx)
-  hx
-}
-
-computeWeights <- function(x, H){
-  
-  N_x <- ncol(x)
-  
-  H_x <- sapply(1:N_x, function(i){
-    
-    M <- x[,i]
-    
-    - computeUtilityBase(n, M, X, 
-                         gradient_list, coeffs_true)
-    
-    
-  })
-  
-  Stheta_x <- S_theta(H_x)
-  
-  w <- Stheta_x / sum(Stheta_x)
-  
-  Ep_X <- apply(
-    apply(x, 1, function(x_i){ x_i * w}),
-    2, sum)
-  
-  Tx <- x
-  
-  Etheta_X <- apply(x, 1, mean)
-  
-  Tx_sum <- apply(Tx, 1, sum)
-  
-  Vartheta_X <- 1 / (N_x - 1) * (Tx %*% t(Tx)) - 
-    1 / (N_x^2 - N_x) * Tx_sum %*% t(Tx_sum)
-}
-
-mapThetaToProb <- function(theta){
-  
-  # theta_all <- c(theta, 0)
-  theta_all <- theta
-  
-  exp_theta_all <- exp(theta_all)
-  
-  exp_theta_all / sum(exp_theta_all)
-  
-}
-
-grad_logfX <- function(x, theta, n_occ){
-  x - n_occ * exp(theta) / sum(exp(theta))
-  # n <- length(gamma) + 1
-  # x[-n] - n_occ * exp(theta) / (1 + sum(exp(theta)))
-}
-
-T_thetaX <- function(theta, X, n){
-  
-  apply(X, 2, function(x){
-    grad_logfX(x, theta, n)
-    # x[-n] - n * exp(theta) / (1 + sum(exp(theta)))  
-  })
-  
-  
-}
-
-H_logfX <- function(theta, n_occ){
-  
-  n <- length(theta)
-  
-  H_f <- matrix(NA, n, n)
-  
-  for (i in 1:n) {
-    for (j in 1:n) {
-      if(i == j){
-        H_f[i,j] <- - n_occ * exp(theta[i]) / sum(exp(theta)) + 
-          n_occ * exp(theta[i])^2 / sum(exp(theta))^2 
-      } else {
-        H_f[i,j] <- n_occ * exp(theta[i]) * exp(theta[j]) / (sum(exp(theta)))^2
-      }
-    }
-  }
-  
-  return(H_f)
-  
-}
-
