@@ -40,11 +40,11 @@ findOptimalDesignOld <- function(niter,
     
     print(paste0("Iter = ",i))
     print(paste0("Theta = ",
-                 paste0(round(mapThetaToProb(theta), 3), collapse = "-")))
+                 paste0(round(mapGammaToPi(theta), 3), collapse = "-")))
     
     # sampling values ----------
     
-    pi <- mapThetaToProb(theta)
+    pi <- mapGammaToPi(theta)
     x <- rmultinom_u(pi, u, n)
     # x <- generateSamples(pi, n_occ, N_x)
     
@@ -225,7 +225,7 @@ findOptimalDesign <- function(designSettings,
     
     print(paste0("Iter = ",iter))
     print(paste0("Theta = ",
-                 paste0(round(mapThetaToProb(theta), 3), collapse = "-")))
+                 paste0(round(mapGammaToPi(theta), 3), collapse = "-")))
     
     # sampling values ----------
     
@@ -243,7 +243,7 @@ findOptimalDesign <- function(designSettings,
                      return( computeUtility(n, M, 
                                             X_psi, X_p, maxM,
                                             coeffs_true,
-                                            U_n, U_N, N_s))
+                                            U_n, U_N))
                    }
     
     
